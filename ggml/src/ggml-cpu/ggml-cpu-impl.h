@@ -519,6 +519,9 @@ void ggml_barrier(struct ggml_threadpool * tp);
 void ggml_threadpool_chunk_set(struct ggml_threadpool * tp, int value);
 int  ggml_threadpool_chunk_add(struct ggml_threadpool * tp, int value);
 
+void ggml_threadpool_set_chunk_id(struct ggml_threadpool * pool, int64_t id);
+int64_t ggml_threadpool_fetch_add_chunk_id(struct ggml_threadpool * pool, int64_t val);
+
 #ifdef __cplusplus
 }
 #endif

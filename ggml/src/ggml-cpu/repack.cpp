@@ -15,7 +15,7 @@
 #include <cstring>
 #include <cassert>
 #include <cstdio>  // for GGML_ASSERT
-
+#include <atomic>
 #include "repack.h"
 
 #if defined(__GNUC__)
@@ -1647,27 +1647,34 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
 
         const void * src1_wdata      = params->wdata;
         const size_t src1_col_stride = ggml_row_size(PARAM_TYPE, ne10);
-        int64_t      src0_start      = (ith * ne01) / nth;
-        int64_t      src0_end        = ((ith + 1) * ne01) / nth;
-        src0_start = (src0_start % NB_COLS) ? src0_start + NB_COLS - (src0_start % NB_COLS) : src0_start;
-        src0_end   = (src0_end   % NB_COLS) ? src0_end   + NB_COLS - (src0_end   % NB_COLS) : src0_end;
-        if (src0_start >= src0_end) {
-            return;
+        const int64_t CHUNK_SIZE = 32;
+        const int64_t n_chunks = (ne01 + CHUNK_SIZE - 1) / CHUNK_SIZE;
+
+        if (ith == 0) {
+            ggml_threadpool_set_chunk_id(params->threadpool, 0);
         }
 
-        // If there are more than three rows in src1, use gemm; otherwise, use gemv.
-        if (ne11 > 3) {
-            gemm<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00,
-                    (float *) ((char *) dst->data) + src0_start, ne01,
-                    (const char *) src0->data + src0_start * nb01,
-                    (const char *) src1_wdata, ne11 - ne11 % 4, src0_end - src0_start);
-        }
-        for (int iter = ne11 - ne11 % 4; iter < ne11; iter++) {
-            gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00,
-                    (float *) ((char *) dst->data + (iter * nb1)) + src0_start, ne01,
-                    (const char *) src0->data + src0_start * nb01,
-                    (const char *) src1_wdata + (src1_col_stride * iter), 1,
-                    src0_end - src0_start);
+        ggml_barrier(params->threadpool);
+
+        int64_t chunk_idx = ggml_threadpool_fetch_add_chunk_id(params->threadpool, 1);
+        while (chunk_idx < n_chunks) {
+            const int64_t src0_start = chunk_idx * CHUNK_SIZE;
+            const int64_t src0_end = std::min(src0_start + CHUNK_SIZE, ne01);
+            
+            if (ne11 > 3) {
+                gemm<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00,
+                        (float *) ((char *) dst->data + src0_start * nb0), ne01,
+                        (const char *) src0->data + src0_start * nb01,
+                        (const char *) src1_wdata, ne11 - ne11 % 4, src0_end - src0_start);
+            }
+            for (int iter = ne11 - ne11 % 4; iter < ne11; iter++) {
+                gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00,
+                        (float *) ((char *) dst->data + (iter * nb1) + (src0_start * nb0)), ne01,
+                        (const char *) src0->data + src0_start * nb01,
+                        (const char *) src1_wdata + (src1_col_stride * iter), 1,
+                        src0_end - src0_start);
+            }
+            chunk_idx = ggml_threadpool_fetch_add_chunk_id(params->threadpool, 1);
         }
     }
 

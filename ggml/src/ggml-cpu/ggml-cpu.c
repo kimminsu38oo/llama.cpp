@@ -469,6 +469,14 @@ struct ggml_threadpool {
     enum ggml_status ec;
 };
 
+void ggml_threadpool_set_chunk_id(struct ggml_threadpool * pool, int64_t id) {
+    atomic_store_explicit(&pool->current_chunk, id, memory_order_relaxed);
+}
+
+int64_t ggml_threadpool_fetch_add_chunk_id(struct ggml_threadpool * pool, int64_t val) {
+    return atomic_fetch_add_explicit(&pool->current_chunk, val, memory_order_relaxed);
+}
+
 // Per-thread state
 struct ggml_compute_state {
 #ifndef GGML_USE_OPENMP
